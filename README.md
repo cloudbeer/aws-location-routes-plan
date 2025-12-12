@@ -2,7 +2,7 @@
 
 A minimal delivery route optimization application built with AWS Location Service.
 
-![Screenshot](screenshot.png)
+![Screenshot](screenshot.webp)
 
 ## Features
 

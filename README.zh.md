@@ -2,7 +2,7 @@
 
 基于 AWS Location Service 的最小化快递路径规划应用。
 
-![应用截图](screenshot.png)
+![应用截图](screenshot.webp)
 
 ## 功能特性
 
