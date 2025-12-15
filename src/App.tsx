@@ -46,6 +46,9 @@ function App() {
   const [routesClient, setRoutesClient] = useState<GeoRoutesClient | null>(null)
   const [showManualInput, setShowManualInput] = useState(false)
   const [manualCoords, setManualCoords] = useState('')
+  const [coordFormat, setCoordFormat] = useState<'lngLat' | 'latLng'>('lngLat')
+  const [showDepotInput, setShowDepotInput] = useState(false)
+  const [depotCoords, setDepotCoords] = useState('')
   const [language, setLanguage] = useState<'en' | 'zh'>('en')
   const [deliveryTimeMinutes, setDeliveryTimeMinutes] = useState(5)
   const [useTraffic, setUseTraffic] = useState(true)
@@ -77,7 +80,10 @@ function App() {
       addCoords: 'Add Coords',
       cancel: 'Cancel',
       delete: 'Delete',
-      coordPlaceholder: 'Enter coordinates, one per line, format: longitude,latitude\nExample:\n44.3661, 33.3152\n44.3700, 33.3200',
+      coordPlaceholder: 'Enter coordinates, one per line\nExample:\n44.3661, 33.3152\n44.3700, 33.3200',
+      coordFormatLngLat: 'lng, lat',
+      coordFormatLatLng: 'lat, lng',
+      depotCoordPlaceholder: 'e.g. 44.3661, 33.3152',
       nearestAlgorithm: 'Nearest Neighbor Algorithm',
       awsAlgorithm: 'AWS Official Optimization',
       minutes: 'min',
@@ -109,7 +115,10 @@ function App() {
       addCoords: '添加坐标',
       cancel: '取消',
       delete: '删除',
-      coordPlaceholder: '输入经纬度，一行一个，格式：经度,纬度\n例如：\n44.3661, 33.3152\n44.3700, 33.3200',
+      coordPlaceholder: '输入坐标，一行一个\n例如：\n44.3661, 33.3152\n44.3700, 33.3200',
+      coordFormatLngLat: '经度, 纬度',
+      coordFormatLatLng: '纬度, 经度',
+      depotCoordPlaceholder: '如: 44.3661, 33.3152',
       nearestAlgorithm: '最近邻算法',
       awsAlgorithm: 'AWS 官方优化',
       minutes: '分钟',
@@ -131,7 +140,7 @@ function App() {
         console.error('初始化 AWS 客户端失败:', error)
       }
     }
-    
+
     if (AWS_API_KEY) {
       initClient()
     }
@@ -140,7 +149,7 @@ function App() {
   // 生成交通参数
   const getTrafficParams = useCallback(() => {
     if (!useTraffic) return {}
-    
+
     if (departureTime) {
       // 使用未来时间预测交通
       return { DepartureTime: new Date(departureTime).toISOString() }
@@ -370,13 +379,13 @@ function App() {
 
         // 按优化后的顺序计算路径
         for (const waypoint of optimizeResult.OptimizedWaypoints) {
-          const originalIndex = deliveryPoints.findIndex(point => 
+          const originalIndex = deliveryPoints.findIndex(point =>
             Math.abs(point.coordinates[0] - waypoint.Position[0]) < 0.0001 &&
             Math.abs(point.coordinates[1] - waypoint.Position[1]) < 0.0001
           )
           const waypointIndex = originalIndex + 1
           optimizedSequence.push(waypointIndex)
-          
+
           const routeCommand = new CalculateRoutesCommand({
             Origin: allCoordinates[allCoordinates.length - 1],
             Destination: waypoint.Position,
@@ -392,21 +401,21 @@ function App() {
           if (routeResult?.Routes?.[0]?.Legs?.[0]?.Geometry?.LineString) {
             const coords = routeResult.Routes[0].Legs[0].Geometry.LineString
             const segmentDuration = (routeResult.Routes[0].Summary?.Duration ?? 0) + (deliveryTimeMinutes * 60)
-            
+
             const startCoord = allCoordinates[allCoordinates.length - 1]
             const endCoord = waypoint.Position
             const midPoint: [number, number] = [
               (startCoord[0] + endCoord[0]) / 2,
               (startCoord[1] + endCoord[1]) / 2
             ]
-            
+
             segments.push({
               startPoint: startCoord,
               endPoint: endCoord,
               duration: segmentDuration,
               midPoint
             })
-            
+
             allCoordinates.push(...coords.slice(1))
             totalDistance += routeResult.Routes[0].Summary?.Distance ?? 0
             totalTime += segmentDuration
@@ -431,21 +440,21 @@ function App() {
         if (returnRoute?.Routes?.[0]?.Legs?.[0]?.Geometry?.LineString) {
           const coords = returnRoute.Routes[0].Legs[0].Geometry.LineString
           const returnDuration = returnRoute.Routes[0].Summary?.Duration ?? 0
-          
+
           const startCoord = allCoordinates[allCoordinates.length - 1]
           const endCoord = depot.coordinates
           const midPoint: [number, number] = [
             (startCoord[0] + endCoord[0]) / 2,
             (startCoord[1] + endCoord[1]) / 2
           ]
-          
+
           segments.push({
             startPoint: startCoord,
             endPoint: endCoord,
             duration: returnDuration,
             midPoint
           })
-          
+
           allCoordinates.push(...coords.slice(1))
           totalDistance += returnRoute.Routes[0].Summary?.Distance ?? 0
           totalTime += returnRoute.Routes[0].Summary?.Duration ?? 0
@@ -490,13 +499,16 @@ function App() {
   const handleManualInput = useCallback(() => {
     const lines = manualCoords.trim().split('\n')
     const newPoints: DeliveryPoint[] = []
-    
+
     lines.forEach((line, index) => {
       const coords = line.trim().split(/[,\s]+/)
       if (coords.length >= 2) {
-        const lng = parseFloat(coords[0])
-        const lat = parseFloat(coords[1])
-        if (!isNaN(lng) && !isNaN(lat)) {
+        const first = parseFloat(coords[0])
+        const second = parseFloat(coords[1])
+        if (!isNaN(first) && !isNaN(second)) {
+          // 根据格式选择解析坐标
+          const lng = coordFormat === 'lngLat' ? first : second
+          const lat = coordFormat === 'lngLat' ? second : first
           newPoints.push({
             id: Date.now().toString() + index,
             coordinates: [lng, lat],
@@ -505,13 +517,33 @@ function App() {
         }
       }
     })
-    
+
     if (newPoints.length > 0) {
       setDeliveryPoints(prev => [...prev, ...newPoints])
       setManualCoords('')
       setShowManualInput(false)
     }
-  }, [manualCoords, deliveryPoints.length])
+  }, [manualCoords, deliveryPoints.length, coordFormat])
+
+  // 处理 depot 手动输入
+  const handleDepotInput = useCallback(() => {
+    const coords = depotCoords.trim().split(/[,\s]+/)
+    if (coords.length >= 2) {
+      const first = parseFloat(coords[0])
+      const second = parseFloat(coords[1])
+      if (!isNaN(first) && !isNaN(second)) {
+        const lng = coordFormat === 'lngLat' ? first : second
+        const lat = coordFormat === 'lngLat' ? second : first
+        setDepot({
+          id: 'depot',
+          coordinates: [lng, lat],
+          address: `${t[language].depot_} (${lng.toFixed(4)}, ${lat.toFixed(4)})`
+        })
+        setDepotCoords('')
+        setShowDepotInput(false)
+      }
+    }
+  }, [depotCoords, coordFormat, language, t])
 
   // 格式化地址显示
   const formatAddress = useCallback((point: DeliveryPoint, index?: number) => {
@@ -566,10 +598,10 @@ function App() {
         ))}
 
         {optimizedRoute?.segments?.map((segment, index) => (
-          <Marker 
-            key={`segment-${index}`} 
-            longitude={segment.midPoint[0]} 
-            latitude={segment.midPoint[1]} 
+          <Marker
+            key={`segment-${index}`}
+            longitude={segment.midPoint[0]}
+            latitude={segment.midPoint[1]}
             anchor="center"
           >
             <div className="segment-time">
@@ -582,7 +614,7 @@ function App() {
       <div className="control-panel">
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
           <h2 style={{ fontSize: '18px', margin: 0 }}>{t[language].title}</h2>
-          <button 
+          <button
             onClick={() => setLanguage(language === 'en' ? 'zh' : 'en')}
             style={{ padding: '4px 8px', fontSize: '16px' }}
             title={language === 'en' ? '切换到中文' : 'Switch to English'}
@@ -590,7 +622,7 @@ function App() {
             {language === 'en' ? '🇨🇳' : '🇺🇸'}
           </button>
         </div>
-        
+
         <div className="section">
           <h3>{t[language].vehicleType}</h3>
           <div className="button-group">
@@ -617,7 +649,7 @@ function App() {
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             <input
               type="range"
-              min="1"
+              min="0"
               max="15"
               value={deliveryTimeMinutes}
               onChange={(e) => setDeliveryTimeMinutes(Number(e.target.value))}
@@ -639,7 +671,7 @@ function App() {
             />
             {language === 'en' ? 'Use traffic information' : '使用交通信息'}
           </label>
-          
+
           {useTraffic && (
             <div>
               <label style={{ display: 'block', fontSize: '13px', marginBottom: '4px' }}>
@@ -653,8 +685,8 @@ function App() {
                 min={new Date().toISOString().slice(0, 16)}
               />
               <div style={{ fontSize: '11px', color: 'gray', marginTop: '2px' }}>
-                {language === 'en' 
-                  ? 'Leave empty for real-time traffic' 
+                {language === 'en'
+                  ? 'Leave empty for real-time traffic'
                   : '留空使用实时交通信息'}
               </div>
             </div>
@@ -664,12 +696,64 @@ function App() {
         <div className="section">
           <h3>{t[language].depot}</h3>
           {!depot ? (
-            <button
-              className={clickMode === 'depot' ? 'primary' : ''}
-              onClick={() => setClickMode('depot')}
-            >
-              {clickMode === 'depot' ? '📍...' : t[language].setDepot}
-            </button>
+            <>
+              <div style={{ display: 'flex', gap: '8px', marginBottom: '8px' }}>
+                <button
+                  className={clickMode === 'depot' ? 'primary' : ''}
+                  onClick={() => setClickMode('depot')}
+                  style={{ flex: 1 }}
+                  title={t[language].mapAdd}
+                >
+                  📍
+                </button>
+                <button
+                  onClick={() => setShowDepotInput(!showDepotInput)}
+                  style={{ flex: 1 }}
+                  title={t[language].manualInput}
+                >
+                  ⌨️
+                </button>
+              </div>
+              {showDepotInput && (
+                <div style={{ marginBottom: '8px' }}>
+                  <div style={{ display: 'flex', gap: '8px', marginBottom: '4px', fontSize: '12px' }}>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                      <input
+                        type="radio"
+                        name="depotCoordFormat"
+                        checked={coordFormat === 'lngLat'}
+                        onChange={() => setCoordFormat('lngLat')}
+                      />
+                      {t[language].coordFormatLngLat}
+                    </label>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                      <input
+                        type="radio"
+                        name="depotCoordFormat"
+                        checked={coordFormat === 'latLng'}
+                        onChange={() => setCoordFormat('latLng')}
+                      />
+                      {t[language].coordFormatLatLng}
+                    </label>
+                  </div>
+                  <input
+                    type="text"
+                    value={depotCoords}
+                    onChange={(e) => setDepotCoords(e.target.value)}
+                    placeholder={t[language].depotCoordPlaceholder}
+                    style={{ width: '100%', padding: '8px', fontSize: '12px', marginBottom: '4px' }}
+                  />
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    <button onClick={handleDepotInput} className="primary" style={{ flex: 1 }}>
+                      ✅
+                    </button>
+                    <button onClick={() => { setDepotCoords(''); setShowDepotInput(false) }} style={{ flex: 1 }}>
+                      ❌
+                    </button>
+                  </div>
+                </div>
+              )}
+            </>
           ) : (
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <span style={{ fontSize: '13px', color: 'green' }}>✓ {formatAddress(depot)}</span>
@@ -697,9 +781,29 @@ function App() {
               ⌨️
             </button>
           </div>
-          
+
           {showManualInput && (
             <div style={{ marginBottom: '8px' }}>
+              <div style={{ display: 'flex', gap: '8px', marginBottom: '4px', fontSize: '12px' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                  <input
+                    type="radio"
+                    name="coordFormat"
+                    checked={coordFormat === 'lngLat'}
+                    onChange={() => setCoordFormat('lngLat')}
+                  />
+                  {t[language].coordFormatLngLat}
+                </label>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                  <input
+                    type="radio"
+                    name="coordFormat"
+                    checked={coordFormat === 'latLng'}
+                    onChange={() => setCoordFormat('latLng')}
+                  />
+                  {t[language].coordFormatLatLng}
+                </label>
+              </div>
               <textarea
                 value={manualCoords}
                 onChange={(e) => setManualCoords(e.target.value)}
@@ -723,9 +827,9 @@ function App() {
           <div className="section">
             <h3>{t[language].pointsList} ({deliveryPoints.length})</h3>
             {deliveryPoints.map((point, index) => (
-              <div key={point.id} style={{ 
-                display: 'flex', 
-                justifyContent: 'space-between', 
+              <div key={point.id} style={{
+                display: 'flex',
+                justifyContent: 'space-between',
                 alignItems: 'center',
                 padding: '4px 0',
                 fontSize: '13px'

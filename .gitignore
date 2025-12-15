@@ -31,3 +31,5 @@ lerna-debug.log*
 
 # Git
 .git/
+
+test.txt
