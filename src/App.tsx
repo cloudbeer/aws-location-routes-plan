@@ -65,6 +65,7 @@ function App() {
       pointsList: 'Points List',
       nearestNeighbor: 'Nearest Neighbor',
       awsOptimization: 'AWS Optimization',
+      sequentialRoute: 'Sequential Route',
       clearAll: 'Clear All',
       optimizing: 'Optimizing...',
       result: 'Optimization Result',
@@ -86,6 +87,7 @@ function App() {
       depotCoordPlaceholder: 'e.g. 44.3661, 33.3152',
       nearestAlgorithm: 'Nearest Neighbor Algorithm',
       awsAlgorithm: 'AWS Official Optimization',
+      sequentialAlgorithm: 'Sequential Route',
       minutes: 'min',
       deliveryTime: 'Delivery Time',
       trafficMode: 'Traffic Mode',
@@ -100,6 +102,7 @@ function App() {
       pointsList: '配送点列表',
       nearestNeighbor: '最近邻算法优化',
       awsOptimization: 'AWS 官方优化',
+      sequentialRoute: '按顺序计算',
       clearAll: '清除全部',
       optimizing: '优化中...',
       result: '优化结果',
@@ -121,6 +124,7 @@ function App() {
       depotCoordPlaceholder: '如: 44.3661, 33.3152',
       nearestAlgorithm: '最近邻算法',
       awsAlgorithm: 'AWS 官方优化',
+      sequentialAlgorithm: '按顺序计算',
       minutes: '分钟',
       deliveryTime: '投递时间',
       trafficMode: '交通模式',
@@ -342,6 +346,130 @@ function App() {
       })
     } catch (error) {
       console.error('路径优化失败:', error)
+    } finally {
+      setIsOptimizing(false)
+    }
+  }, [depot, deliveryPoints, vehicleType, routesClient, getTrafficParams, deliveryTimeMinutes, language, t])
+
+  // 按输入顺序计算路径
+  const calculateSequentialRoute = useCallback(async () => {
+    if (!depot || deliveryPoints.length < 1 || !routesClient) return
+
+    setClickMode('none')
+    setIsOptimizing(true)
+
+    try {
+      const points = [depot, ...deliveryPoints]
+      const sequence = points.map((_, i) => i)
+      sequence.push(0) // 返回起点
+
+      const allCoordinates = [depot.coordinates]
+      const segments: RouteSegment[] = []
+      let totalDistance = 0
+      let totalTime = 0
+
+      // 按顺序计算每段路径
+      for (let i = 0; i < points.length - 1; i++) {
+        try {
+          const command = new CalculateRoutesCommand({
+            Origin: points[i].coordinates,
+            Destination: points[i + 1].coordinates,
+            TravelMode: vehicleType,
+            IncludeLegGeometry: true,
+            LegGeometryFormat: 'Simple',
+            LegAdditionalFeatures: ['Summary'],
+            ...getTrafficParams()
+          })
+
+          const routeResult = await routesClient.send(command)
+
+          if (routeResult?.Routes?.[0]?.Legs?.[0]?.Geometry?.LineString) {
+            const coords = routeResult.Routes[0].Legs[0].Geometry.LineString
+            const segmentDuration = (routeResult.Routes[0].Summary?.Duration ?? 0) + (deliveryTimeMinutes * 60)
+
+            const startCoord = points[i].coordinates
+            const endCoord = points[i + 1].coordinates
+            const midPoint: [number, number] = [
+              (startCoord[0] + endCoord[0]) / 2,
+              (startCoord[1] + endCoord[1]) / 2
+            ]
+
+            segments.push({
+              startPoint: startCoord,
+              endPoint: endCoord,
+              duration: segmentDuration,
+              midPoint
+            })
+
+            allCoordinates.push(...coords.slice(1))
+            totalDistance += routeResult.Routes[0].Summary?.Distance ?? 0
+            totalTime += segmentDuration
+          }
+        } catch (error) {
+          console.error('路径计算失败:', error)
+          allCoordinates.push(points[i + 1].coordinates)
+        }
+      }
+
+      // 返回起点
+      try {
+        const command = new CalculateRoutesCommand({
+          Origin: points[points.length - 1].coordinates,
+          Destination: depot.coordinates,
+          TravelMode: vehicleType,
+          IncludeLegGeometry: true,
+          LegGeometryFormat: 'Simple',
+          LegAdditionalFeatures: ['Summary'],
+          ...getTrafficParams()
+        })
+
+        const returnRoute = await routesClient.send(command)
+
+        if (returnRoute?.Routes?.[0]?.Legs?.[0]?.Geometry?.LineString) {
+          const coords = returnRoute.Routes[0].Legs[0].Geometry.LineString
+          const returnDuration = returnRoute.Routes[0].Summary?.Duration ?? 0
+
+          const startCoord = points[points.length - 1].coordinates
+          const endCoord = depot.coordinates
+          const midPoint: [number, number] = [
+            (startCoord[0] + endCoord[0]) / 2,
+            (startCoord[1] + endCoord[1]) / 2
+          ]
+
+          segments.push({
+            startPoint: startCoord,
+            endPoint: endCoord,
+            duration: returnDuration,
+            midPoint
+          })
+
+          allCoordinates.push(...coords.slice(1))
+          totalDistance += returnRoute.Routes[0].Summary?.Distance ?? 0
+          totalTime += returnRoute.Routes[0].Summary?.Duration ?? 0
+        }
+      } catch (error) {
+        console.error('返程路径计算失败:', error)
+        allCoordinates.push(depot.coordinates)
+      }
+
+      const routeGeometry = {
+        type: 'Feature',
+        geometry: {
+          type: 'LineString',
+          coordinates: allCoordinates
+        }
+      }
+
+      setOptimizedRoute({
+        sequence,
+        totalDistance: totalDistance / 1000,
+        totalTime: totalTime / 60,
+        routeGeometry,
+        segments,
+        algorithmName: t[language].sequentialAlgorithm
+      })
+    } catch (error) {
+      console.error('路径计算失败:', error)
     } finally {
       setIsOptimizing(false)
     }
@@ -842,6 +970,14 @@ function App() {
         )}
 
         <div className="section">
+          <button
+            onClick={calculateSequentialRoute}
+            disabled={!depot || deliveryPoints.length < 1 || isOptimizing}
+            className="primary"
+            style={{ width: '100%', marginBottom: '8px' }}
+          >
+            {isOptimizing ? t[language].optimizing : t[language].sequentialRoute}
+          </button>
           <button
             onClick={optimizeRoute}
             disabled={!depot || deliveryPoints.length < 2 || isOptimizing}
